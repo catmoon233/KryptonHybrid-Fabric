@@ -1,5 +1,6 @@
 package com.xinian.KryptonHybrid.shared.network.compression;
 
+import com.github.luben.zstd.Zstd;
 import com.github.luben.zstd.ZstdCompressCtx;
 import com.github.luben.zstd.ZstdDecompressCtx;
 import com.xinian.KryptonHybrid.shared.KryptonConfig;
@@ -61,14 +62,65 @@ public final class ZstdUtil {
         if (!AVAILABLE) {
             return "unavailable (native library load failed)";
         }
-        return KryptonConfig.compressionAlgorithm == CompressionAlgorithm.ZSTD
-                ? "enabled (zstd-jni, native, level " + KryptonConfig.zstdLevel + ")"
-                : "available but not selected";
+        if (KryptonConfig.compressionAlgorithm != CompressionAlgorithm.ZSTD) {
+            return "available but not selected";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("enabled (zstd-jni, native, level ").append(KryptonConfig.zstdLevel);
+        if (KryptonConfig.zstdWorkers > 0) {
+            sb.append(", workers=").append(KryptonConfig.zstdWorkers);
+            if (KryptonConfig.zstdOverlapLog > 0) {
+                sb.append(", overlap=").append(KryptonConfig.zstdOverlapLog);
+            }
+            if (KryptonConfig.zstdJobSize > 0) {
+                sb.append(", jobSize=").append(KryptonConfig.zstdJobSize);
+            }
+        }
+        if (KryptonConfig.zstdEnableLDM) {
+            sb.append(", LDM=on(wlog=").append(KryptonConfig.zstdLongDistanceWindowLog).append(')');
+        }
+        if (KryptonConfig.zstdStrategy > 0) {
+            sb.append(", strategy=").append(STRATEGY_NAMES[KryptonConfig.zstdStrategy]);
+        }
+        sb.append(')');
+        return sb.toString();
     }
 
+    /** Human-readable names for Zstd strategies (indices 0–9). */
+    private static final String[] STRATEGY_NAMES = {
+            "auto", "fast", "dfast", "greedy", "lazy", "lazy2",
+            "btlazy2", "btopt", "btultra", "btultra2"
+    };
+
     /**
-     * Creates a new per-channel {@link ZstdCompressCtx} configured with the current
-     * compression level from {@link KryptonConfig#zstdLevel}.
+     * Creates a new per-channel {@link ZstdCompressCtx} configured with all current
+     * compression parameters from {@link KryptonConfig}.
+     *
+     * <h4>Applied parameters</h4>
+     * <ul>
+     *   <li><strong>Level</strong> ({@link KryptonConfig#zstdLevel}): base compression
+     *       level [1–22].  Must be set <em>before</em> strategy so that strategy can
+     *       override the level's default match-finding algorithm.</li>
+     *   <li><strong>Workers</strong> ({@link KryptonConfig#zstdWorkers}): number of
+     *       native threads for parallel compression.  0 = single-threaded (Netty I/O
+     *       thread only).  When &ge; 1, the native Zstd library internally manages a
+     *       worker pool per {@code ZstdCompressCtx} and partitions input into jobs.</li>
+     *   <li><strong>Overlap log</strong> ({@link KryptonConfig#zstdOverlapLog}): how
+     *       much context each worker shares with the previous one.  Only effective
+     *       when workers &ge; 1.  0 = auto (Zstd picks based on level).</li>
+     *   <li><strong>Job size</strong> ({@link KryptonConfig#zstdJobSize}): minimum
+     *       bytes per worker thread.  Only effective when workers &ge; 1.  0 = auto.</li>
+     *   <li><strong>Long-distance matching</strong> ({@link KryptonConfig#zstdEnableLDM}
+     *       + {@link KryptonConfig#zstdLongDistanceWindowLog}): searches for repeated
+     *       sequences across a very large window.  Improves ratio for repetitive data
+     *       at the cost of higher memory.</li>
+     *   <li><strong>Strategy</strong> ({@link KryptonConfig#zstdStrategy}): selects the
+     *       match-finding algorithm (fast / dfast / greedy / lazy / lazy2 / btlazy2 /
+     *       btopt / btultra / btultra2).  0 = auto (determined by level).</li>
+     *   <li><strong>Checksum</strong>: always disabled — Minecraft's protocol already
+     *       frames packets with VarInt length prefixes; an additional checksum would
+     *       add 4 bytes per packet for no benefit.</li>
+     * </ul>
      *
      * @return a configured, ready-to-use compress context
      * @throws IllegalStateException if Zstd is not enabled
@@ -80,6 +132,43 @@ public final class ZstdUtil {
         ZstdCompressCtx ctx = new ZstdCompressCtx();
         ctx.setLevel(KryptonConfig.zstdLevel);
         ctx.setChecksum(false);
+        // Suppress the 8-byte content-size field in the Zstd frame header.
+        // The Minecraft protocol already transmits uncompressed size as a VarInt prefix,
+        // so the frame-level field is redundant.  Removing it saves 8 bytes per packet
+        // and avoids a small amount of internal bookkeeping in libzstd.
+        ctx.setContentSize(false);
+
+        // --- Multi-threaded compression ---
+        int workers = KryptonConfig.zstdWorkers;
+        if (workers > 0) {
+            ctx.setWorkers(workers);
+
+            int overlapLog = KryptonConfig.zstdOverlapLog;
+            if (overlapLog > 0) {
+                ctx.setOverlapLog(overlapLog);
+            }
+
+            int jobSize = KryptonConfig.zstdJobSize;
+            if (jobSize > 0) {
+                ctx.setJobSize(jobSize);
+            }
+        }
+
+        // --- Long-distance matching ---
+        if (KryptonConfig.zstdEnableLDM) {
+            ctx.setEnableLongDistanceMatching(Zstd.ParamSwitch.ENABLE);
+            int windowLog = KryptonConfig.zstdLongDistanceWindowLog;
+            if (windowLog > 0) {
+                ctx.setLong(windowLog);
+            }
+        }
+
+        // --- Strategy override ---
+        int strategy = KryptonConfig.zstdStrategy;
+        if (strategy > 0) {
+            ctx.setStrategy(strategy);
+        }
+
         return ctx;
     }
 

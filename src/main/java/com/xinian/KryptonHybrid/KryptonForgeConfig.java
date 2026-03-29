@@ -34,6 +34,12 @@ public final class KryptonForgeConfig {
 
     private final ModConfigSpec.EnumValue<CompressionAlgorithm> algorithm;
     private final ModConfigSpec.IntValue                        zstdLevel;
+    private final ModConfigSpec.IntValue                        zstdWorkers;
+    private final ModConfigSpec.IntValue                        zstdOverlapLog;
+    private final ModConfigSpec.IntValue                        zstdJobSize;
+    private final ModConfigSpec.BooleanValue                    zstdEnableLDM;
+    private final ModConfigSpec.IntValue                        zstdLongDistanceWindowLog;
+    private final ModConfigSpec.IntValue                        zstdStrategy;
     private final ModConfigSpec.BooleanValue                    lightOptEnabled;
     private final ModConfigSpec.BooleanValue                    dccEnabled;
     private final ModConfigSpec.IntValue                        dccSizeLimit;
@@ -65,6 +71,92 @@ public final class KryptonForgeConfig {
                         "Range: 1 \u2013 22  |  Default: 3"
                 )
                 .defineInRange("zstd_level", 3, 1, 22);
+
+        builder.pop();
+
+        builder.comment(
+                "Krypton Hybrid - Zstd Advanced / Parallel Compression",
+                "Fine-grained control over Zstd's native multi-threaded compression",
+                "and match-finding parameters.  These settings only take effect when",
+                "compression.algorithm = ZSTD.  Changes require a server restart",
+                "(new connections will use the updated values).",
+                "",
+                "WARNING: Misconfigured values can increase CPU usage or memory",
+                "consumption significantly.  The defaults are safe for all scenarios."
+        ).push("zstd_advanced");
+
+        zstdWorkers = builder
+                .comment(
+                        "Number of native worker threads for parallel Zstd compression.",
+                        "0 = single-threaded (compression runs in the Netty I/O thread).",
+                        "Values >= 1 activate libzstd's multi-threaded mode: input data is",
+                        "split into jobs compressed in parallel by a per-connection native",
+                        "thread pool.  Useful when compressing large payloads (chunk data,",
+                        "recipe sync) on multi-core CPUs.",
+                        "",
+                        "Total native threads = workers × active connections, so keep this",
+                        "low on high-player-count servers.",
+                        "Range: 0 \u2013 128  |  Default: 0 (single-threaded)"
+                )
+                .defineInRange("workers", 0, 0, 128);
+
+        zstdOverlapLog = builder
+                .comment(
+                        "Overlap log for multi-threaded compression.",
+                        "Controls how much context (dictionary data) each worker thread",
+                        "shares with the previous thread's output.  Higher values improve",
+                        "compression ratio but use more memory per job.",
+                        "Only meaningful when workers >= 1.",
+                        "overlap_size = 2^(overlapLog) KB.",
+                        "0 = auto (Zstd picks a value based on compression level).",
+                        "Range: 0 \u2013 9  |  Default: 0"
+                )
+                .defineInRange("overlap_log", 0, 0, 9);
+
+        zstdJobSize = builder
+                .comment(
+                        "Job size (bytes) for multi-threaded compression.",
+                        "Minimum input partition per worker thread.  Smaller values increase",
+                        "parallelism for small payloads but add scheduling overhead.",
+                        "Only meaningful when workers >= 1.",
+                        "0 = auto (Zstd selects based on compression level and overlap).",
+                        "Range: 0 (auto) or 512 \u2013 1073741824  |  Default: 0"
+                )
+                .defineInRange("job_size", 0, 0, 1073741824);
+
+        zstdEnableLDM = builder
+                .comment(
+                        "Enable Zstd long-distance matching (LDM).",
+                        "When true, Zstd searches for repeated byte sequences across a",
+                        "much larger window than the standard match finder.  Improves ratio",
+                        "for highly repetitive data (flat-world chunks, bulk NBT) at the",
+                        "cost of higher memory usage.",
+                        "Default: false"
+                )
+                .define("enable_long_distance_matching", false);
+
+        zstdLongDistanceWindowLog = builder
+                .comment(
+                        "Window log for long-distance matching.",
+                        "Sets the LDM window size exponent: window = 2^windowLog bytes.",
+                        "Only used when enable_long_distance_matching = true.",
+                        "20 = 1 MB, 24 = 16 MB, 27 = 128 MB (Zstd default).",
+                        "For Minecraft traffic, 20\u201324 is usually sufficient.",
+                        "Range: 10 \u2013 30  |  Default: 27"
+                )
+                .defineInRange("long_distance_window_log", 27, 10, 30);
+
+        zstdStrategy = builder
+                .comment(
+                        "Zstd compression strategy (match-finding algorithm).",
+                        "Higher strategies find better matches but use more CPU.",
+                        "0 = auto (determined by compression level).",
+                        "1 = fast,  2 = dfast,  3 = greedy,  4 = lazy,  5 = lazy2,",
+                        "6 = btlazy2,  7 = btopt,  8 = btultra,  9 = btultra2.",
+                        "Values above 5 are NOT recommended for real-time game servers.",
+                        "Range: 0 \u2013 9  |  Default: 0 (auto)"
+                )
+                .defineInRange("strategy", 0, 0, 9);
 
         builder.pop();
 
@@ -134,6 +226,12 @@ public final class KryptonForgeConfig {
     public void bake() {
         KryptonConfig.compressionAlgorithm = algorithm.get();
         KryptonConfig.zstdLevel            = zstdLevel.get();
+        KryptonConfig.zstdWorkers          = zstdWorkers.get();
+        KryptonConfig.zstdOverlapLog       = zstdOverlapLog.get();
+        KryptonConfig.zstdJobSize          = zstdJobSize.get();
+        KryptonConfig.zstdEnableLDM        = zstdEnableLDM.get();
+        KryptonConfig.zstdLongDistanceWindowLog = zstdLongDistanceWindowLog.get();
+        KryptonConfig.zstdStrategy         = zstdStrategy.get();
         KryptonConfig.lightOptEnabled      = lightOptEnabled.get();
         KryptonConfig.dccEnabled           = dccEnabled.get();
         KryptonConfig.dccSizeLimit         = dccSizeLimit.get();

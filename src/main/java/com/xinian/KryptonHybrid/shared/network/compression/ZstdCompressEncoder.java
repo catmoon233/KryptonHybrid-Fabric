@@ -7,29 +7,76 @@ import io.netty.handler.codec.MessageToByteEncoder;
 import net.minecraft.network.FriendlyByteBuf;
 import com.xinian.KryptonHybrid.shared.network.NetworkTrafficStats;
 
+import java.nio.ByteBuffer;
+
 /**
- * A Netty {@link MessageToByteEncoder} that compresses outgoing Minecraft packets using
- * the Zstandard (Zstd) algorithm via the zstd-jni library.
+ * Low-latency Netty {@link MessageToByteEncoder} that compresses outgoing Minecraft
+ * packets using Zstandard (Zstd) via the zstd-jni native library.
  *
- * <p>The wire format intentionally mirrors the vanilla
- * {@link net.minecraft.network.CompressionEncoder} / Krypton
- * {@link MinecraftCompressEncoder} protocol so that the
- * {@link ZstdCompressDecoder} on the receiving end can reverse it correctly:</p>
+ * <h3>Wire format</h3>
+ * <p>Intentionally mirrors vanilla {@link net.minecraft.network.CompressionEncoder}:</p>
  * <pre>
- *   VarInt(0)                        \u2013 packet is NOT compressed (size &lt; threshold)
+ *   VarInt(0)                             – packet NOT compressed (size &lt; threshold)
  *   raw bytes
  *
- *   VarInt(original_uncompressed_size)  \u2013 packet IS compressed
+ *   VarInt(original_uncompressed_size)    – packet IS compressed
  *   Zstd-compressed bytes
  * </pre>
  *
- * <p><strong>Note:</strong> Both sides of a connection (client and server) must run
- * KryptonFNP with {@code compression.algorithm = ZSTD} for Zstd to be used.</p>
+ * <h3>Latency optimizations over the naïve implementation</h3>
+ *
+ * <h4>1. Zero-copy DirectByteBuffer fast path</h4>
+ * <p>When both the input {@code msg} and the output {@code out} are backed by direct
+ * memory (the common case in Netty's pooled allocator), the encoder calls
+ * {@link ZstdCompressCtx#compressDirectByteBuffer} which passes native pointers
+ * directly to libzstd.  This eliminates:</p>
+ * <ul>
+ *   <li>Two {@code new byte[]} heap allocations per packet (input copy + output buffer)</li>
+ *   <li>Two full-payload {@code memcpy} operations (ByteBuf → byte[] → ByteBuf)</li>
+ *   <li>GC pressure from short-lived byte arrays at 20+ Hz × N players</li>
+ * </ul>
+ *
+ * <h4>2. Per-handler reusable scratch buffers (heap fallback)</h4>
+ * <p>When either buffer is heap-backed (rare: integrated-server local channel, some
+ * test harnesses), the encoder falls back to {@link ZstdCompressCtx#compressByteArray}
+ * but reuses <em>grow-only</em> byte arrays stored as instance fields instead of
+ * allocating fresh arrays every call.  This bounds GC pressure to at most one
+ * allocation per power-of-two size class over the handler's lifetime.</p>
+ *
+ * <h4>3. Content-size header suppression</h4>
+ * <p>{@link ZstdUtil#createCompressor()} sets {@code setContentSize(false)}, telling
+ * libzstd to omit the 8-byte uncompressed-size field from the Zstd frame header.
+ * The Minecraft protocol already transmits the uncompressed size as a VarInt prefix,
+ * so the frame-header field is redundant.  Savings: 8 bytes per compressed packet +
+ * the internal bookkeeping to write it.</p>
+ *
+ * <h4>4. Direct output allocation</h4>
+ * <p>{@link #allocateBuffer} always allocates a <strong>direct</strong> output buffer
+ * (via {@code ctx.alloc().directBuffer()}) to maximize the chance of hitting the
+ * zero-copy path and to align with the downstream Netty pipeline (encryption,
+ * framing, socket write) which also operates on direct memory.</p>
+ *
+ * <h4>Latency impact summary</h4>
+ * <table>
+ *   <tr><th>Operation</th><th>Before</th><th>After (direct)</th></tr>
+ *   <tr><td>Heap alloc</td><td>2 × new byte[N]</td><td>0</td></tr>
+ *   <tr><td>Data copies</td><td>2 × memcpy(N)</td><td>0</td></tr>
+ *   <tr><td>Frame header</td><td>+8 B content-size</td><td>omitted</td></tr>
+ *   <tr><td>GC pressure</td><td>~2N bytes/packet</td><td>0</td></tr>
+ * </table>
+ *
+ * @see ZstdCompressDecoder
+ * @see ZstdUtil#createCompressor()
  */
 public class ZstdCompressEncoder extends MessageToByteEncoder<ByteBuf> {
 
     private int threshold;
     private final ZstdCompressCtx compressor;
+
+    /** Grow-only scratch buffer for the input (heap-fallback path only). */
+    private byte[] scratchIn = new byte[8192];
+    /** Grow-only scratch buffer for the output (heap-fallback path only). */
+    private byte[] scratchOut = new byte[8192];
 
     /**
      * Creates a new encoder.
@@ -50,6 +97,7 @@ public class ZstdCompressEncoder extends MessageToByteEncoder<ByteBuf> {
         int uncompressedSize = msg.readableBytes();
         int startWireIndex = out.writerIndex();
 
+        // --- Below threshold: pass through uncompressed ---
         if (uncompressedSize < threshold) {
             wrappedOut.writeVarInt(0);
             out.writeBytes(msg);
@@ -57,32 +105,63 @@ public class ZstdCompressEncoder extends MessageToByteEncoder<ByteBuf> {
             return;
         }
 
-        byte[] inputBytes = new byte[uncompressedSize];
-        msg.readBytes(inputBytes);
-
         int maxOut = ZstdUtil.maxCompressedLength(uncompressedSize);
-        byte[] compressedBytes = new byte[maxOut];
+
+        // Write the uncompressed-size header first
+        wrappedOut.writeVarInt(uncompressedSize);
+
+        // --- Fast path: both buffers are direct → zero-copy native compression ---
+        if (msg.isDirect() && msg.nioBufferCount() == 1
+                && out.isDirect() && out.nioBufferCount() == 1) {
+            // Ensure the output buffer has enough writable capacity
+            out.ensureWritable(maxOut);
+
+            // Obtain NIO direct byte buffers from Netty
+            ByteBuffer nioIn  = msg.nioBuffer(msg.readerIndex(), uncompressedSize);
+            ByteBuffer nioOut = out.nioBuffer(out.writerIndex(), maxOut);
+
+            int compressedSize = compressor.compressDirectByteBuffer(
+                    nioOut, 0, maxOut,
+                    nioIn,  0, uncompressedSize);
+
+            // Advance Netty indices
+            msg.skipBytes(uncompressedSize);
+            out.writerIndex(out.writerIndex() + compressedSize);
+
+            NetworkTrafficStats.INSTANCE.recordEncode(uncompressedSize, out.writerIndex() - startWireIndex);
+            return;
+        }
+
+        // --- Heap fallback: reusable scratch buffers ---
+        if (scratchIn.length < uncompressedSize) {
+            scratchIn = new byte[uncompressedSize];
+        }
+        msg.readBytes(scratchIn, 0, uncompressedSize);
+
+        if (scratchOut.length < maxOut) {
+            scratchOut = new byte[maxOut];
+        }
 
         int compressedSize = compressor.compressByteArray(
-                compressedBytes, 0, maxOut,
-                inputBytes, 0, uncompressedSize);
+                scratchOut, 0, maxOut,
+                scratchIn, 0, uncompressedSize);
 
-        wrappedOut.writeVarInt(uncompressedSize);
-        out.writeBytes(compressedBytes, 0, compressedSize);
+        out.writeBytes(scratchOut, 0, compressedSize);
         NetworkTrafficStats.INSTANCE.recordEncode(uncompressedSize, out.writerIndex() - startWireIndex);
     }
 
     /**
-     * Pre-allocates the output buffer.
+     * Always allocates a <strong>direct</strong> output buffer to maximize the chance
+     * of hitting the zero-copy compression fast path.
+     *
+     * <p>Size is {@code 5 (max VarInt) + maxCompressedLength(input)} which guarantees
+     * the compressed output always fits without reallocation.</p>
      */
     @Override
     protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, ByteBuf msg, boolean preferDirect)
             throws Exception {
-        int readable = msg.readableBytes();
-        int initialSize = 5 + ZstdUtil.maxCompressedLength(readable);
-        return preferDirect
-                ? ctx.alloc().directBuffer(initialSize)
-                : ctx.alloc().heapBuffer(initialSize);
+        int initialSize = 5 + ZstdUtil.maxCompressedLength(msg.readableBytes());
+        return ctx.alloc().directBuffer(initialSize);
     }
 
     /**
@@ -103,4 +182,3 @@ public class ZstdCompressEncoder extends MessageToByteEncoder<ByteBuf> {
         this.threshold = threshold;
     }
 }
-
