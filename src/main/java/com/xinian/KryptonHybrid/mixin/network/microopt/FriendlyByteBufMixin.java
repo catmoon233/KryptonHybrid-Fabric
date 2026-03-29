@@ -16,11 +16,21 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Micro-optimizations for {@link FriendlyByteBuf} serialization.
+ * Micro-optimizations for {@link FriendlyByteBuf} serialization and deserialization.
  * <p>
  * Uses {@code @Inject(HEAD, cancellable=true)} instead of {@code @Overwrite} to preserve the
  * original method bytecode, allowing other mods (e.g. Mantle, PacketFixer) to apply their own
  * injections without conflict.
+ *
+ * <h3>Optimized methods</h3>
+ * <ul>
+ *   <li><strong>{@code writeUtf}</strong> — single-pass write via {@link ByteBufUtil#utf8Bytes}</li>
+ *   <li><strong>{@code writeVarInt}</strong> — peeled 1/2/3/4/5-byte paths, direct source writes</li>
+ *   <li><strong>{@code writeVarLong}</strong> — peeled 1/2-byte paths</li>
+ *   <li><strong>{@code readVarInt}</strong> — branchless 4-byte getIntLE + bit-twiddling fast path
+ *       (same algorithm as {@code Varint21FrameDecoderMixin}); eliminates per-byte conditional
+ *       branches for 1–4 byte VarInts (the vast majority of Minecraft traffic)</li>
+ * </ul>
  */
 @Mixin(value = FriendlyByteBuf.class, priority = 900)
 public abstract class FriendlyByteBufMixin extends ByteBuf {
@@ -50,6 +60,25 @@ public abstract class FriendlyByteBufMixin extends ByteBuf {
         this.writeVarInt(utf8Bytes);
         this.writeCharSequence(string, StandardCharsets.UTF_8);
         cir.setReturnValue((FriendlyByteBuf) (Object) this);
+    }
+
+    /**
+     * Optimized VarInt reading: branchless 4-byte fast path using the same bit-twiddling
+     * technique from the Varint21FrameDecoder (netty#14050).
+     *
+     * <p>Reads the underlying {@code source} buffer directly, bypassing the vanilla
+     * {@code VarInt.read(this.source)} delegate call.  For 1–4 byte VarInts (which
+     * cover values 0–268,435,455 — virtually all Minecraft VarInts), the decode is
+     * performed with a single {@code getIntLE}, two bitwise merges, and zero conditional
+     * branches.</p>
+     *
+     * <p>This is called on every inbound packet for at least the packet ID, and often
+     * dozens of times per packet (collection sizes, string lengths, enum ordinals,
+     * entity IDs, block positions, etc.).</p>
+     */
+    @Inject(method = "readVarInt", at = @At("HEAD"), cancellable = true)
+    private void readVarInt$kryptonfnp(CallbackInfoReturnable<Integer> cir) {
+        cir.setReturnValue(VarIntUtil.readVarInt(this.source));
     }
 
     /**

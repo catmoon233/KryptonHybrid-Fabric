@@ -40,7 +40,11 @@ public final class KryptonForgeConfig {
     private final ModConfigSpec.BooleanValue                    zstdEnableLDM;
     private final ModConfigSpec.IntValue                        zstdLongDistanceWindowLog;
     private final ModConfigSpec.IntValue                        zstdStrategy;
+    private final ModConfigSpec.BooleanValue                    zstdDictEnabled;
+    private final ModConfigSpec.ConfigValue<String>             zstdDictPath;
+    private final ModConfigSpec.BooleanValue                    zstdDictRequired;
     private final ModConfigSpec.BooleanValue                    lightOptEnabled;
+    private final ModConfigSpec.BooleanValue                    chunkOptEnabled;
     private final ModConfigSpec.BooleanValue                    dccEnabled;
     private final ModConfigSpec.IntValue                        dccSizeLimit;
     private final ModConfigSpec.IntValue                        dccDistance;
@@ -158,6 +162,30 @@ public final class KryptonForgeConfig {
                 )
                 .defineInRange("strategy", 0, 0, 9);
 
+        zstdDictEnabled = builder
+                .comment(
+                        "Enable pre-trained Zstd dictionary compression.",
+                        "Both server and client must use the same dictionary file.",
+                        "Default: false"
+                )
+                .define("dict_enabled", false);
+
+        zstdDictPath = builder
+                .comment(
+                        "Path to the pre-trained dictionary file (.zdict).",
+                        "Relative paths are resolved from the game working directory.",
+                        "Default: config/krypton_hybrid.zdict"
+                )
+                .define("dict_path", "config/krypton_hybrid.zdict");
+
+        zstdDictRequired = builder
+                .comment(
+                        "If true, dictionary load failure is fatal for Zstd context creation.",
+                        "If false, Krypton falls back to plain Zstd and logs a warning.",
+                        "Default: false"
+                )
+                .define("dict_required", false);
+
         builder.pop();
 
         builder.comment(
@@ -171,6 +199,28 @@ public final class KryptonForgeConfig {
                 .comment(
                         "Enable uniform-RLE encoding for light DataLayer arrays.",
                         "Saves up to ~40 KB per chunk load in open-sky environments.",
+                        "Default: true"
+                )
+                .define("enabled", true);
+
+        builder.pop();
+
+        builder.comment(
+                "Krypton Hybrid - Chunk Data Optimization",
+                "Reduces ClientboundLevelChunkPacketData size by replacing NBT-based",
+                "heightmap serialization with compact binary + XOR-delta encoding, and",
+                "extracting biome data from the section buffer for single-value detection.",
+                "Requires Krypton Hybrid on BOTH the server and every connecting client."
+        ).push("chunk_data_opt");
+
+        chunkOptEnabled = builder
+                .comment(
+                        "Enable biome delta encoding and heightmap compression.",
+                        "Heightmaps: compact binary format with XOR-delta (~40 bytes NBT overhead",
+                        "saved per chunk, plus significantly better compressibility for correlated",
+                        "heightmap data under Zstd/ZLIB).",
+                        "Biomes: single-value sections encoded as 2 bytes instead of 3+; biome",
+                        "data grouped for better cross-section compressor exploitation.",
                         "Default: true"
                 )
                 .define("enabled", true);
@@ -232,7 +282,11 @@ public final class KryptonForgeConfig {
         KryptonConfig.zstdEnableLDM        = zstdEnableLDM.get();
         KryptonConfig.zstdLongDistanceWindowLog = zstdLongDistanceWindowLog.get();
         KryptonConfig.zstdStrategy         = zstdStrategy.get();
+        KryptonConfig.zstdDictEnabled      = zstdDictEnabled.get();
+        KryptonConfig.zstdDictPath         = zstdDictPath.get();
+        KryptonConfig.zstdDictRequired     = zstdDictRequired.get();
         KryptonConfig.lightOptEnabled      = lightOptEnabled.get();
+        KryptonConfig.chunkOptEnabled      = chunkOptEnabled.get();
         KryptonConfig.dccEnabled           = dccEnabled.get();
         KryptonConfig.dccSizeLimit         = dccSizeLimit.get();
         KryptonConfig.dccDistance          = dccDistance.get();

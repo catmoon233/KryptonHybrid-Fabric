@@ -145,6 +145,42 @@ public final class KryptonConfig {
      */
     public static volatile int zstdStrategy = 0;
 
+    /**
+     * Enables pre-trained Zstd dictionary compression for all connections.
+     *
+     * <p>When enabled, both compressor and decompressor contexts load the same dictionary
+     * bytes before processing packets. This improves ratio for repetitive packet families
+     * (chunk/light/entity deltas and frequent custom payload templates), especially at
+     * low compression levels.</p>
+     */
+    public static volatile boolean zstdDictEnabled = false;
+
+    /**
+     * Path to the pre-trained Zstd dictionary file (.zdict).
+     * Relative paths are resolved from the game working directory.
+     */
+    public static volatile String zstdDictPath = "config/krypton_hybrid.zdict";
+
+    /**
+     * If true, dictionary load failure is fatal for Zstd context creation.
+     * If false, Krypton logs a warning and falls back to plain Zstd.
+     */
+    public static volatile boolean zstdDictRequired = false;
+
+    // Chunk data optimization (biome delta encoding + heightmap compression)
+
+    /**
+     * Whether to apply Krypton's chunk-data optimizations to
+     * {@code ClientboundLevelChunkPacketData}: biome delta encoding and heightmap
+     * binary compression with XOR-delta.  When enabled, heightmap data is written in
+     * a compact binary format (replacing NBT), and per-section biome data is extracted
+     * from the section buffer and encoded with single-value detection, improving both
+     * pre-compression size and compressibility.
+     * Requires Krypton Hybrid on <strong>both</strong> server and client.
+     * Default: {@code true}.
+     */
+    public static volatile boolean chunkOptEnabled = true;
+
     // Delayed Chunk Cache (DCC)
 
     // Light data optimization

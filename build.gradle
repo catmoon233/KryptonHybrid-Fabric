@@ -202,3 +202,34 @@ idea {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
+
+tasks.register('trainZstdDict', JavaExec) {
+    group = 'krypton'
+    description = 'Train a Zstd dictionary from sample files using the Java 21 toolchain.'
+    dependsOn tasks.named('classes')
+
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.xinian.KryptonHybrid.tool.ZstdDictionaryTrainer'
+
+    def samplesDirProp = providers.gradleProperty('samplesDir')
+    def outputDictProp = providers.gradleProperty('outputDict')
+    def dictSizeProp = providers.gradleProperty('dictSize')
+    def maxSamplesProp = providers.gradleProperty('maxSamples')
+
+    doFirst {
+        def samplesDir = samplesDirProp.orNull
+        if (!samplesDir) {
+            throw new GradleException('Missing -PsamplesDir=<path>')
+        }
+
+        def outputDict = outputDictProp.orElse('config/krypton_hybrid.zdict').get()
+        def dictSize = dictSizeProp.orElse('65536').get()
+        def maxSamples = maxSamplesProp.orElse('8000').get()
+
+        args samplesDir.toString(), outputDict.toString(), dictSize.toString(), maxSamples.toString()
+    }
+}

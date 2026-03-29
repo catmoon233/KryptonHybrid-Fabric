@@ -6,6 +6,11 @@ import com.github.luben.zstd.ZstdDecompressCtx;
 import com.xinian.KryptonHybrid.shared.KryptonConfig;
 import com.xinian.KryptonHybrid.shared.KryptonSharedBootstrap;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
 /**
  * Utility class for Zstd compression using the zstd-jni library.
  *
@@ -31,6 +36,12 @@ public final class ZstdUtil {
      * created successfully at startup.
      */
     public static final boolean AVAILABLE;
+
+    private static volatile byte[] dictionaryBytes;
+    private static volatile long dictionaryId;
+    private static volatile String dictionaryError;
+    private static volatile boolean dictionaryLoadAttempted;
+    private static volatile ZstdDictionaryMetadata dictionaryMetadata;
 
     static {
         boolean available = false;
@@ -82,8 +93,104 @@ public final class ZstdUtil {
         if (KryptonConfig.zstdStrategy > 0) {
             sb.append(", strategy=").append(STRATEGY_NAMES[KryptonConfig.zstdStrategy]);
         }
+        if (KryptonConfig.zstdDictEnabled) {
+            sb.append(", dict=").append(dictionaryStatusDescription());
+        }
         sb.append(')');
         return sb.toString();
+    }
+
+    public static synchronized void reloadDictionary() {
+        dictionaryLoadAttempted = true;
+        dictionaryBytes = null;
+        dictionaryId = 0L;
+        dictionaryError = null;
+
+        if (!AVAILABLE || !KryptonConfig.zstdDictEnabled) {
+            return;
+        }
+
+        String configuredPath = KryptonConfig.zstdDictPath == null ? "" : KryptonConfig.zstdDictPath.trim();
+        if (configuredPath.isEmpty()) {
+            dictionaryError = "dictionary path is empty";
+            return;
+        }
+
+        Path path = resolveDictionaryPath(configuredPath);
+        try {
+            if (!Files.exists(path)) {
+                dictionaryError = "dictionary file not found: " + path;
+                return;
+            }
+
+            byte[] bytes = Files.readAllBytes(path);
+            if (bytes.length < 64) {
+                dictionaryError = "dictionary file is too small: " + bytes.length + " bytes";
+                return;
+            }
+
+            long dictId = Zstd.getDictIdFromDict(bytes);
+            dictionaryBytes = bytes;
+            dictionaryId = dictId;
+
+            KryptonSharedBootstrap.LOGGER.info(
+                    "Loaded Zstd dictionary: {} ({} bytes, id={})",
+                    path,
+                    bytes.length,
+                    dictId);
+        } catch (IOException ioe) {
+            dictionaryError = "failed reading dictionary: " + ioe.getMessage();
+        } catch (Throwable t) {
+            dictionaryError = "failed validating dictionary: " + t.getMessage();
+        }
+    }
+
+    public static String dictionaryStatusDescription() {
+        if (!KryptonConfig.zstdDictEnabled) {
+            return "off";
+        }
+        if (dictionaryBytes != null) {
+            StringBuilder sb = new StringBuilder("on(id=").append(dictionaryId).append(", ").append(dictionaryBytes.length).append("B");
+            if (dictionaryMetadata != null) {
+                sb.append(", samples=").append(dictionaryMetadata.getSampleCount());
+            }
+            sb.append(")");
+            return sb.toString();
+        }
+        String err = dictionaryError;
+        if (err == null) {
+            return "pending";
+        }
+        return "error(" + err + ")";
+    }
+
+    private static Path resolveDictionaryPath(String configuredPath) {
+        Path path = Paths.get(configuredPath);
+        return path.isAbsolute() ? path.normalize() : Paths.get("").resolve(path).normalize();
+    }
+
+    private static byte[] getDictionaryOrFailIfRequired() {
+        if (!KryptonConfig.zstdDictEnabled) {
+            return null;
+        }
+        if (!dictionaryLoadAttempted) {
+            reloadDictionary();
+        }
+
+        byte[] dict = dictionaryBytes;
+        if (dict != null) {
+            return dict;
+        }
+
+        String err = dictionaryError != null ? dictionaryError : "unknown dictionary load failure";
+        if (KryptonConfig.zstdDictRequired) {
+            throw new IllegalStateException("Zstd dictionary is required but unavailable: " + err);
+        }
+
+        KryptonSharedBootstrap.LOGGER.warn(
+                "Zstd dictionary unavailable ({}); falling back to plain Zstd.",
+                err);
+        return null;
     }
 
     /** Human-readable names for Zstd strategies (indices 0–9). */
@@ -169,6 +276,12 @@ public final class ZstdUtil {
             ctx.setStrategy(strategy);
         }
 
+        byte[] dict = getDictionaryOrFailIfRequired();
+        if (dict != null) {
+            ctx.loadDict(dict);
+            ctx.setDictID(true);
+        }
+
         return ctx;
     }
 
@@ -182,12 +295,33 @@ public final class ZstdUtil {
         if (!isEnabled()) {
             throw new IllegalStateException("Zstd is not enabled. Check krypton_fnp-common.toml.");
         }
-        return new ZstdDecompressCtx();
+        ZstdDecompressCtx ctx = new ZstdDecompressCtx();
+        byte[] dict = getDictionaryOrFailIfRequired();
+        if (dict != null) {
+            ctx.loadDict(dict);
+        }
+        return ctx;
+    }
+
+    /**
+     * Returns the loaded dictionary metadata if available (only for wrapped dictionaries).
+     * @return metadata or null if dictionary is not loaded or is a plain dictionary
+     */
+    public static ZstdDictionaryMetadata getDictionaryMetadata() {
+        return dictionaryMetadata;
+    }
+
+    /**
+     * Returns the currently loaded dictionary ID.
+     * @return dictionary ID, or 0 if no dictionary is loaded
+     */
+    public static long getCurrentDictionaryId() {
+        return dictionaryId;
     }
 
     /**
      * Returns the maximum compressed output size for an input of {@code uncompressedSize} bytes.
-     *
+
      * @param uncompressedSize the number of uncompressed input bytes
      * @return an upper bound on the compressed output size
      */
