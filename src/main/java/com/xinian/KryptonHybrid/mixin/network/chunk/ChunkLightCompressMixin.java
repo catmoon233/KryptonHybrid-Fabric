@@ -38,13 +38,13 @@ import java.util.List;
  *   [0x4B]           鈥?Krypton marker (1 byte)
  *   [skyYMask]       鈥?BitSet (FriendlyByteBuf.writeBitSet)
  *   [blockYMask]     鈥?BitSet
- *   [emptySkyYMask]  鈥?BitSet
- *   [emptyBlockYMask]鈥?BitSet
- *   [skyCount]       鈥?VarInt
+ *   [emptySkyYMask]    BitSet
+ *   [emptyBlockYMask]  BitSet
+ *   [skyCount]         VarInt
  *   For each sky DataLayer:
- *     [0x00] + 2048 bytes  鈥?raw encoding (fixed size; no VarInt prefix)
- *     [0x01] + 1 byte      鈥?uniform encoding (all nibble pairs == byte)
- *   [blockCount]     鈥?VarInt
+ *     [0x00] + 2048 bytes  raw encoding (fixed size; no VarInt prefix)
+ *     [0x01] + 1 byte      uniform encoding (all nibble pairs == byte)
+ *   [blockCount]     VarInt
  *   For each block DataLayer: same as above
  * </pre>
  *
