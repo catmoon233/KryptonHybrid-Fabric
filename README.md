@@ -22,6 +22,7 @@ Krypton Hybrid is a fork based on [Krypton fnp](https://github.com/404Setup/Kryp
 
 Krypton Hybrid replaces Minecraft's default zlib codec by injecting into `Connection.setupCompression`.
 
+
 | Feature | Detail |
 |---|---|
 | Primary algorithm | Zstd via `zstd-jni` (native) |
@@ -159,6 +160,11 @@ ChunkMap.tick() RETURN
 ```
 
 Requires operator permission level 2.
+
+## test data
+In the original test, this mod was able to reduce the initial package size to 13% of the original.
+
+<img src="./test.png" alt="test" />
 
 ## Credit
 
