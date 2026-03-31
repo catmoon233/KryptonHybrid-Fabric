@@ -3,8 +3,6 @@ package com.xinian.KryptonHybrid;
 import com.xinian.KryptonHybrid.command.KryptonStatsCommand;
 import com.xinian.KryptonHybrid.shared.KryptonConfig;
 import com.xinian.KryptonHybrid.shared.KryptonSharedBootstrap;
-import com.xinian.KryptonHybrid.shared.network.KryptonHelloPayload;
-import com.xinian.KryptonHybrid.shared.network.KryptonNetworkHandler;
 import com.xinian.KryptonHybrid.shared.network.compression.ZstdUtil;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -14,9 +12,6 @@ import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
-import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
-import net.neoforged.neoforge.network.handling.DirectionalPayloadHandler;
-import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 
 @Mod(kryptonhybrid.MODID)
 public class kryptonhybrid {
@@ -27,7 +22,6 @@ public class kryptonhybrid {
 
         modEventBus.addListener(this::onConfigLoad);
         modEventBus.addListener(this::onConfigReload);
-        modEventBus.addListener(this::onRegisterPayloads);
 
         NeoForge.EVENT_BUS.addListener(this::onRegisterCommands);
 
@@ -54,24 +48,6 @@ public class kryptonhybrid {
 
     private void onRegisterCommands(RegisterCommandsEvent event) {
         KryptonStatsCommand.register(event.getDispatcher());
-    }
-
-    /**
-     * Registers the {@code krypton_hybrid:hello} payload for capability negotiation.
-     * The channel is marked as optional so vanilla/non-Krypton clients can still connect.
-     */
-    private void onRegisterPayloads(RegisterPayloadHandlersEvent event) {
-        final PayloadRegistrar registrar = event.registrar(MODID)
-                .optional();
-
-        registrar.configurationBidirectional(
-                KryptonHelloPayload.TYPE,
-                KryptonHelloPayload.STREAM_CODEC,
-                new DirectionalPayloadHandler<>(
-                        KryptonNetworkHandler::handleClientHello,
-                        KryptonNetworkHandler::handleServerHello
-                )
-        );
     }
 }
 

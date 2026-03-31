@@ -5,14 +5,11 @@ import com.velocitypowered.natives.util.Natives;
 import io.netty.channel.Channel;
 import com.xinian.KryptonHybrid.shared.misc.KryptonPipelineEvent;
 import com.xinian.KryptonHybrid.shared.KryptonConfig;
-import com.xinian.KryptonHybrid.shared.ProxyMode;
-import com.xinian.KryptonHybrid.shared.network.KryptonCapabilityHolder;
 import com.xinian.KryptonHybrid.shared.network.compression.MinecraftCompressDecoder;
 import com.xinian.KryptonHybrid.shared.network.compression.MinecraftCompressEncoder;
 import com.xinian.KryptonHybrid.shared.network.compression.ZstdCompressDecoder;
 import com.xinian.KryptonHybrid.shared.network.compression.ZstdCompressEncoder;
 import com.xinian.KryptonHybrid.shared.network.compression.ZstdUtil;
-import com.xinian.KryptonHybrid.shared.KryptonSharedBootstrap;
 import net.minecraft.network.CompressionDecoder;
 import net.minecraft.network.CompressionEncoder;
 import net.minecraft.network.Connection;
@@ -40,22 +37,6 @@ public class ConnectionMixin {
         return o instanceof CompressionDecoder
                 || o instanceof MinecraftCompressEncoder
                 || o instanceof ZstdCompressEncoder;
-    }
-
-    @Unique
-    private boolean kryptonfnp$isForcedZlib() {
-        // Explicit VELOCITY mode always forces ZLIB
-        if (KryptonConfig.proxyMode == ProxyMode.VELOCITY) {
-            return true;
-        }
-        // AUTO mode: check per-connection proxy detection flag
-        if (KryptonConfig.proxyMode == ProxyMode.AUTO) {
-            Connection self = (Connection) (Object) this;
-            if (self instanceof KryptonCapabilityHolder holder) {
-                return holder.krypton$getCapabilities().isBehindProxy();
-            }
-        }
-        return false;
     }
 
     @Inject(method = "setupCompression", at = @At("HEAD"), cancellable = true)
@@ -86,10 +67,7 @@ public class ConnectionMixin {
                 this.channel.pipeline().fireUserEventTriggered(KryptonPipelineEvent.COMPRESSION_THRESHOLD_UPDATED);
 
             } else {
-                // Determine if we should use Zstd or fall back to ZLIB
-                boolean useZstd = ZstdUtil.isEnabled() && !kryptonfnp$isForcedZlib();
-
-                if (useZstd) {
+                if (ZstdUtil.isEnabled()) {
                     ZstdCompressEncoder zstdEncoder =
                             new ZstdCompressEncoder(compressionThreshold, ZstdUtil.createCompressor());
                     ZstdCompressDecoder zstdDecoder =
@@ -98,10 +76,6 @@ public class ConnectionMixin {
                     channel.pipeline().addBefore("decoder", "decompress", zstdDecoder);
                     channel.pipeline().addBefore("encoder", "compress", zstdEncoder);
                 } else {
-                    if (kryptonfnp$isForcedZlib() && ZstdUtil.isEnabled()) {
-                        KryptonSharedBootstrap.LOGGER.debug(
-                                "Proxy mode active — using ZLIB instead of Zstd for backend compatibility");
-                    }
                     VelocityCompressor compressor = Natives.compress.get().create(4);
 
                     MinecraftCompressEncoder encoder =
@@ -120,3 +94,4 @@ public class ConnectionMixin {
         ci.cancel();
     }
 }
+
