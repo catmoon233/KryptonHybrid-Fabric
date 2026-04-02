@@ -1,0 +1,17 @@
+accessWidener v2 named
+
+# Make Varint21FrameDecoder.decode accessible for mixin injection
+accessible method net/minecraft/network/Varint21FrameDecoder decode (Lio/netty/channel/ChannelHandlerContext;Lio/netty/buffer/ByteBuf;Ljava/util/List;)V
+
+# Make ClientboundLevelChunkPacketData$BlockEntityInfo accessible
+accessible class net/minecraft/network/protocol/game/ClientboundLevelChunkPacketData$BlockEntityInfo
+
+# Make ChunkHolder.broadcast and ChunkHolder.broadcastBlockEntity accessible
+accessible method net/minecraft/server/level/ChunkHolder broadcast (Ljava/util/List;Lnet/minecraft/network/protocol/Packet;)V
+accessible method net/minecraft/server/level/ChunkHolder broadcastBlockEntity (Ljava/util/List;Lnet/minecraft/world/level/Level;Lnet/minecraft/core/BlockPos;)V
+
+# Make ServerChunkCache.tickChunks accessible
+accessible method net/minecraft/server/level/ServerChunkCache tickChunks ()V
+
+# Make ClientboundBlockEntityDataPacket constructor accessible
+accessible method net/minecraft/network/protocol/game/ClientboundBlockEntityDataPacket <init> (Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/entity/BlockEntityType;Lnet/minecraft/nbt/CompoundTag;)V

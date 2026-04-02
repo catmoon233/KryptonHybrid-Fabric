@@ -243,6 +243,36 @@ public final class KryptonConfig {
      */
     public static volatile boolean blockEntityDeltaEnabled = true;
 
+    // --- Security ---
+
+    /**
+     * Whether the security subsystem (rate limiting, anomaly detection, etc.) is active.
+     * Default: {@code true}.
+     */
+    public static volatile boolean securityEnabled = true;
+
+    /**
+     * Whether per-packet rate limiting is enabled when the security subsystem is active.
+     * Default: {@code true}.
+     */
+    public static volatile boolean securityPacketRateLimitEnabled = true;
+
+    // --- Proxy Compatibility ---
+
+    /**
+     * Controls how Krypton Hybrid interacts with reverse proxies (e.g. Velocity).
+     * Default: {@link ProxyMode#NONE}.
+     */
+    public static volatile ProxyMode proxyMode = ProxyMode.NONE;
+
+    /**
+     * Shared secret for Velocity Modern Forwarding.
+     * Must match the forwarding-secret in Velocity's velocity.toml.
+     * Leave empty to disable modern forwarding.
+     * Default: (empty).
+     */
+    public static volatile String velocityForwardingSecret = "";
+
     private KryptonConfig() {}
 }
 
