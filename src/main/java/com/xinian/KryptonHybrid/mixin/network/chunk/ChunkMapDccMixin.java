@@ -85,7 +85,6 @@ public abstract class ChunkMapDccMixin {
     @SuppressWarnings("unused")
     @Unique
     private static void krypton$dropChunkNow(ServerPlayer player, ChunkPos chunkPos) {
-        net.neoforged.neoforge.event.EventHooks.fireChunkUnWatch(player, chunkPos, player.serverLevel());
         player.connection.chunkSender.dropChunk(player, chunkPos);
     }
 
@@ -96,7 +95,6 @@ public abstract class ChunkMapDccMixin {
     }
 
     private static void dropChunkDeferred(ServerPlayer player, ChunkPos chunkPos) {
-        net.neoforged.neoforge.event.EventHooks.fireChunkUnWatch(player, chunkPos, player.serverLevel());
         player.connection.chunkSender.dropChunk(player, chunkPos);
     }
 }
