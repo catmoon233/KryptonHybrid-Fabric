@@ -45,14 +45,18 @@ public final class VelocityModernForwardingHandler {
      * Processes Velocity modern forwarding data, verifying the HMAC signature
      * and extracting player information.
      *
+     * <p><strong>Note:</strong> This is a stub implementation. Full HMAC-SHA256
+     * verification and Velocity forwarding data parsing are not yet implemented.
+     * Modern forwarding will not function until this method is completed.</p>
+     *
      * @param data   raw forwarding data bytes from the proxy
      * @param secret shared forwarding secret
      * @return a {@link ForwardingResult} with the player profile and address, or
-     *         {@code null} if verification fails
+     *         {@code null} if verification fails (currently always {@code null})
      */
     public static ForwardingResult processForwardingData(byte[] data, String secret) {
-        // TODO: implement full HMAC-SHA256 verification and data parsing
-        // This is a stub that always returns null (forwarding disabled)
+        // Stub: HMAC-SHA256 verification and Velocity forwarding data parsing
+        // are not yet implemented. Always returns null (modern forwarding disabled).
         return null;
     }
 
